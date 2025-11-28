@@ -1,29 +1,25 @@
 plugins {
     id("java-library")
-    id("com.github.johnrengelman.shadow") version "8.1.1"
+    id("org.allaymc.gradle.plugin") version "0.1.2"
 }
 
 group = "org.allaymc.serverinfo"
-description = "Show some information through scoreboard"
 version = "1.4.0"
+description = "Show some information through scoreboard"
 
-java {
-    toolchain {
-        languageVersion = JavaLanguageVersion.of(21)
+allay {
+    api = "0.17.0"
+    apiOnly = true
+    server = null
+
+    plugin {
+        entrance = ".ServerInfo"
+        apiVersion = ">=0.17.0"
+        authors += "daoge_cmd"
     }
 }
 
-repositories {
-    mavenCentral()
-    maven("https://jitpack.io/")
-    maven("https://repo.opencollab.dev/maven-releases/")
-    maven("https://repo.opencollab.dev/maven-snapshots/")
-    maven("https://storehouse.okaeri.eu/repository/maven-public/")
-}
-
 dependencies {
-    compileOnly(group = "org.allaymc.allay", name = "api", version = "0.6.0")
     compileOnly(group = "org.projectlombok", name = "lombok", version = "1.18.34")
-
     annotationProcessor(group = "org.projectlombok", name = "lombok", version = "1.18.34")
 }

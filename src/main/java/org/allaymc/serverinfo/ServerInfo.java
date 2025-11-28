@@ -1,29 +1,27 @@
 package org.allaymc.serverinfo;
 
-import eu.okaeri.configs.ConfigManager;
-import eu.okaeri.configs.yaml.snakeyaml.YamlSnakeYamlConfigurer;
 import lombok.Getter;
-import lombok.extern.slf4j.Slf4j;
 import org.allaymc.api.bossbar.BossBar;
 import org.allaymc.api.bossbar.BossBarColor;
-import org.allaymc.api.entity.component.attribute.AttributeType;
+import org.allaymc.api.entity.component.EntityPlayerBaseComponent;
 import org.allaymc.api.entity.interfaces.EntityPlayer;
 import org.allaymc.api.eventbus.EventHandler;
 import org.allaymc.api.eventbus.event.entity.EntityTeleportEvent;
-import org.allaymc.api.eventbus.event.player.PlayerJoinEvent;
-import org.allaymc.api.eventbus.event.player.PlayerQuitEvent;
+import org.allaymc.api.eventbus.event.server.PlayerJoinEvent;
+import org.allaymc.api.eventbus.event.server.PlayerQuitEvent;
+import org.allaymc.api.math.MathUtils;
+import org.allaymc.api.player.Player;
 import org.allaymc.api.plugin.Plugin;
 import org.allaymc.api.registry.Registries;
 import org.allaymc.api.scoreboard.Scoreboard;
 import org.allaymc.api.scoreboard.data.DisplaySlot;
 import org.allaymc.api.server.Server;
-import org.allaymc.api.math.MathUtils;
+import org.allaymc.api.utils.config.Config;
 import org.allaymc.api.world.World;
 import org.joml.Vector3d;
 
 import java.util.*;
 
-@Slf4j
 @Getter
 public final class ServerInfo extends Plugin {
 
@@ -36,22 +34,24 @@ public final class ServerInfo extends Plugin {
     @Override
     public void onLoad() {
         INSTANCE = this;
-        log.info("ServerInfo loaded!");
-        SETTINGS = ConfigManager.create(Settings.class, config -> {
-            config.withConfigurer(new YamlSnakeYamlConfigurer());
-            config.withBindFile(pluginContainer.dataFolder().resolve("config.yml"));
-            config.withRemoveOrphans(true);
-            config.saveDefaults();
-            config.load(true);
-        });
+        getPluginLogger().info("ServerInfo loaded!");
+        var configFile = pluginContainer.dataFolder().resolve("config.yml").toFile();
+        var config = new Config(configFile, Config.YAML);
+        SETTINGS = new Settings();
+        SETTINGS.showWorldInfo = config.getBoolean("show-world-info", true);
+        SETTINGS.showPlayerInfo = config.getBoolean("show-player-info", true);
+        SETTINGS.showChunkInfo = config.getBoolean("show-chunk-info", true);
+        SETTINGS.showLightInfo = config.getBoolean("show-light-info", true);
+        SETTINGS.showMiscInfo = config.getBoolean("show-misc-info", true);
+        SETTINGS.showMSPTBar = config.getBoolean("show-mspt-bar", true);
     }
 
     @Override
     public void onEnable() {
-        log.info("ServerInfo enabled!");
+        getPluginLogger().info("ServerInfo enabled!");
         Server.getInstance().getEventBus().registerListener(this);
         Registries.COMMANDS.register(new ServerInfoCommand());
-        if (SETTINGS.showMSPTBar()) {
+        if (SETTINGS.showMSPTBar) {
             Server.getInstance().getScheduler().scheduleRepeating(this, () -> {
                 updateMSPTBars();
                 return true;
@@ -61,7 +61,7 @@ public final class ServerInfo extends Plugin {
 
     @Override
     public void onDisable() {
-        log.info("ServerInfo disabled!");
+        getPluginLogger().info("ServerInfo disabled!");
         Server.getInstance().getEventBus().unregisterListener(this);
     }
 
@@ -84,9 +84,10 @@ public final class ServerInfo extends Plugin {
     @EventHandler
     private void onPlayerJoin(PlayerJoinEvent event) {
         var player = event.getPlayer();
+        var entity = player.getControlledEntity();
 
-        if (SETTINGS.showMSPTBar()) {
-            getOrCreateWorldMSPTBar(player.getWorld()).addViewer(player);
+        if (SETTINGS.showMSPTBar) {
+            getOrCreateWorldMSPTBar(entity.getWorld()).addViewer(player);
         }
 
         var scoreboard = new Scoreboard("Dashboard");
@@ -96,9 +97,9 @@ public final class ServerInfo extends Plugin {
             if (player.isDisconnected()) {
                 return false;
             }
-            if (!isScoreboardDisabled(player)) {
+            if (!isScoreboardDisabled(entity)) {
                 scoreboard.addViewer(player, DisplaySlot.SIDEBAR);
-                updateScoreboard(player, scoreboard);
+                updateScoreboard(entity, scoreboard);
             } else {
                 scoreboard.removeViewer(player, DisplaySlot.SIDEBAR);
             }
@@ -109,10 +110,11 @@ public final class ServerInfo extends Plugin {
     @EventHandler
     private void onPlayerQuit(PlayerQuitEvent event) {
         var player = event.getPlayer();
-        if (SETTINGS.showMSPTBar()) {
-            getOrCreateWorldMSPTBar(player.getWorld()).removeViewer(player);
+        var entity = player.getControlledEntity();
+        if (SETTINGS.showMSPTBar) {
+            getOrCreateWorldMSPTBar(entity.getWorld()).removeViewer(player);
         }
-        SCOREBOARD_DISABLED.remove(player);
+        SCOREBOARD_DISABLED.remove(entity);
     }
 
     @EventHandler
@@ -125,8 +127,11 @@ public final class ServerInfo extends Plugin {
             return;
         }
 
-        getOrCreateWorldMSPTBar(event.getFrom().dimension().getWorld()).removeViewer(player);
-        getOrCreateWorldMSPTBar(event.getTo().dimension().getWorld()).addViewer(player);
+        var controller = player.getController();
+        if (controller != null) {
+            getOrCreateWorldMSPTBar(event.getFrom().dimension().getWorld()).removeViewer(controller);
+            getOrCreateWorldMSPTBar(event.getTo().dimension().getWorld()).addViewer(controller);
+        }
     }
 
     private void updateMSPTBars() {
@@ -151,9 +156,9 @@ public final class ServerInfo extends Plugin {
         if (!player.isInWorld()) return;
 
         var lines = new ArrayList<String>();
+        var controller = player.getController();
 
-        if (SETTINGS.showWorldInfo()) {
-            // World info
+        if (SETTINGS.showWorldInfo) {
             var worldInfo = "World: §a" + player.getWorld().getWorldData().getDisplayName() + "\n§f" +
                             "Time: §a" + player.getWorld().getWorldData().getTimeOfDay() + "\n§f" +
                             "TPS: §a" + MathUtils.round(player.getWorld().getTPS(), 2) + "\n§f" +
@@ -161,7 +166,7 @@ public final class ServerInfo extends Plugin {
             lines.add(worldInfo);
         }
 
-        if (SETTINGS.showMiscInfo()) {
+        if (SETTINGS.showMiscInfo) {
             var itemInHand = player.getItemInHand();
 
             lines.add(
@@ -170,42 +175,40 @@ public final class ServerInfo extends Plugin {
             );
         }
 
-        if (SETTINGS.showChunkInfo()) {
+        if (SETTINGS.showChunkInfo) {
             var chunk = player.getCurrentChunk();
+            var chunkManager = player.getDimension().getChunkManager();
             var chunkInfo =
                     "Chunk: §a" + chunk.getX() + "," + chunk.getZ() + "\n§f" +
-                    "Loaded: §a" + player.getDimension().getChunkService().getLoadedChunks().size() + "\n§f" +
-                    "Loading: §a" + player.getDimension().getChunkService().getLoadingChunks().size() + "\n§f";
+                    "Loaded: §a" + chunkManager.getLoadedChunks().size() + "\n§f";
             try {
                 var floorLoc = player.getLocation().floor(new Vector3d());
                 chunkInfo += "Biome:\n§a" + player.getCurrentChunk().getBiome((int) floorLoc.x() & 15, (int) floorLoc.y(), (int) floorLoc.z() & 15).toString().toLowerCase();
             } catch (IllegalArgumentException e) {
-                // y coordinate is out of range
                 chunkInfo += "Biome: §aN/A";
             }
             lines.add(chunkInfo);
         }
 
-        if (SETTINGS.showPlayerInfo()) {
-            var playerInfo = "Ping: §a" + player.getPing() + "\n§f" +
-                             "Food: §a" + player.getFoodLevel() + "/" + (int) AttributeType.PLAYER_HUNGER.getMaxValue() + "\n§f" +
-                             "Exhaustion: §a" + MathUtils.round(player.getFoodExhaustionLevel(), 2) + "/" + (int) AttributeType.PLAYER_EXHAUSTION.getMaxValue() + "\n§f" +
-                             "Saturation: §a" + MathUtils.round(player.getFoodSaturationLevel(), 2) + "/" + (int) AttributeType.PLAYER_SATURATION.getMaxValue() + "\n§f" +
-                             "Exp: §a" + player.getExperienceInCurrentLevel() + "/" + player.getRequireExperienceForCurrentLevel();
+        if (SETTINGS.showPlayerInfo && controller != null) {
+            var playerInfo = "Ping: §a" + controller.getPing() + "\n§f" +
+                             "Food: §a" + player.getFoodLevel() + "/" + EntityPlayerBaseComponent.MAX_FOOD_LEVEL + "\n§f" +
+                             "Exhaustion: §a" + MathUtils.round(player.getFoodExhaustionLevel(), 2) + "/" + EntityPlayerBaseComponent.MAX_FOOD_EXHAUSTION_LEVEL + "\n§f" +
+                             "Saturation: §a" + MathUtils.round(player.getFoodSaturationLevel(), 2) + "/" + EntityPlayerBaseComponent.MAX_FOOD_SATURATION_LEVEL + "\n§f" +
+                             "Exp: §a" + player.getExperienceInCurrentLevel() + "/" + player.getRequiredExperienceForCurrentLevel();
             lines.add(playerInfo);
         }
 
-        if (SETTINGS.showLightInfo()) {
+        if (SETTINGS.showLightInfo) {
             var floorLoc = player.getLocation().floor(new Vector3d());
-            int x = (int) floorLoc.x;
-            int y = (int) floorLoc.y;
-            int z = (int) floorLoc.z;
-            var lightService = player.getDimension().getLightService();
-            var lightInfo = "Itl: §a" + lightService.getInternalLight(x, y, z) + "\n§f" +
-                            "Block: §a" + lightService.getBlockLight(x, y, z) + "\n§f" +
-                            "Sky: §a" + lightService.getSkyLight(x, y, z) + "\n§f" +
-                            "ItlSky: §a" + lightService.getInternalSkyLight(x, y, z) + "\n§f" +
-                            "Queue: §a" + lightService.getQueuedUpdateCount();
+            int x = (int) floorLoc.x();
+            int y = (int) floorLoc.y();
+            int z = (int) floorLoc.z();
+            var lightEngine = player.getDimension().getLightEngine();
+            var lightInfo = "Itl: §a" + lightEngine.getInternalLight(x, y, z) + "\n§f" +
+                            "Block: §a" + lightEngine.getBlockLight(x, y, z) + "\n§f" +
+                            "Sky: §a" + lightEngine.getSkyLight(x, y, z) + "\n§f" +
+                            "ItlSky: §a" + lightEngine.getInternalSkyLight(x, y, z);
             lines.add(lightInfo);
         }
 
